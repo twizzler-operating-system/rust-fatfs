@@ -485,7 +485,7 @@ where
     Reader: FnMut(&mut RefMut<'_, IO>, u64) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
 {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        Ok(Read::read(self, buf)?)
+        Ok(Read::read(self.file, buf)?)
     }
 }
 
