@@ -482,7 +482,7 @@ impl<'fs, IO: ReadWriteSeek, TP: TimeProvider, OCC, Reader, Writer> std::io::Rea
     for ReadWriteProxy<'_, 'fs, IO, TP, OCC, Reader, Writer>
 where
     std::io::Error: From<Error<IO::Error>>,
-    Reader: FnMut(&mut RefMut<'_, IO>, u64) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
+    Reader: FnMut(&mut RefMut<'_, IO>, u64, &mut [u8]) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
 {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         Ok(Read::read(self.file, buf)?)
