@@ -420,7 +420,7 @@ impl<IO: ReadWriteSeek, TP: TimeProvider, OCC, Reader, Writer> IoBase
 impl<'fs, IO: ReadWriteSeek, TP: TimeProvider, OCC, Reader, Writer> Read
     for ReadWriteProxy<'_, 'fs, IO, TP, OCC, Reader, Writer>
 where
-    Reader: FnMut(&mut RefMut<'_, IO>, u64, &mut [u8]) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
+    Reader: FnMut(RefMut<'_, IO>, u64, &mut [u8]) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
 {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
         trace!("File::read");
@@ -482,7 +482,7 @@ impl<'fs, IO: ReadWriteSeek, TP: TimeProvider, OCC, Reader, Writer> std::io::Rea
     for ReadWriteProxy<'_, 'fs, IO, TP, OCC, Reader, Writer>
 where
     std::io::Error: From<Error<IO::Error>>,
-    Reader: FnMut(&mut RefMut<'_, IO>, u64, &mut [u8]) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
+    Reader: FnMut(RefMut<'_, IO>, u64, &mut [u8]) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
 {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         Ok(Read::read(self.file, buf)?)
@@ -492,7 +492,7 @@ where
 impl<'fs, IO: ReadWriteSeek, TP: TimeProvider, OCC, Reader, Writer> Write
     for ReadWriteProxy<'_, 'fs, IO, TP, OCC, Reader, Writer>
 where
-    Writer: FnMut(&mut RefMut<'_, IO>, u64, &[u8]) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
+    Writer: FnMut(RefMut<'_, IO>, u64, &[u8]) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
 {
     fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
         trace!("File::write");
@@ -569,7 +569,7 @@ impl<'fs, IO: ReadWriteSeek, TP: TimeProvider, OCC, Reader, Writer> std::io::Wri
     for ReadWriteProxy<'_, 'fs, IO, TP, OCC, Reader, Writer>
 where
     std::io::Error: From<Error<IO::Error>>,
-    Writer: FnMut(&mut RefMut<'_, IO>, u64, &[u8]) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
+    Writer: FnMut(RefMut<'_, IO>, u64, &[u8]) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
 {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         Ok(Write::write(self, buf)?)
