@@ -402,7 +402,7 @@ where
     TP: TimeProvider,
 {
     /// `writer` takes two parameters: (disk: IO, disk_offset: u64) while `reader`
-    /// takes three: (disk: IO, offset: u64, buffer: &[u8]).
+    /// takes three: (disk: IO, offset: u64, buffer: &\[u8\]).
     /// Both return a result containing the number of bytes written if successful or an
     /// IO error if unsuccessful. Note that the disk will have already been seeked
     /// to the disk_offset value.
