@@ -401,8 +401,9 @@ where
     IO: ReadWriteSeek,
     TP: TimeProvider,
 {
-    /// `writer` takes two parameters: (disk, disk_offset) while `reader` takes three: (disk, ) and
-    /// return a result containing the number of bytes written if successful or an
+    /// `writer` takes two parameters: (disk: IO, disk_offset: u64) while `reader`
+    /// takes three: (disk: IO, offset: u64, buffer: &[u8]).
+    /// Both return a result containing the number of bytes written if successful or an
     /// IO error if unsuccessful. Note that the disk will have already been seeked
     /// to the disk_offset value.
     pub fn new(file: &'a mut File<'fs, IO, TP, OCC>, reader: Reader, writer: Writer) -> Self {
