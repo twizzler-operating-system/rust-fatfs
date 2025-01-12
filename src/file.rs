@@ -401,7 +401,7 @@ where
     IO: ReadWriteSeek,
     TP: TimeProvider,
 {
-    /// Both `writer` and `reader` take two parameters: (disk, disk_offset) and
+    /// `writer` takes two parameters: (disk, disk_offset) while `reader` takes three: (disk, ) and
     /// return a result containing the number of bytes written if successful or an
     /// IO error if unsuccessful. Note that the disk will have already been seeked
     /// to the disk_offset value.
@@ -560,6 +560,26 @@ where
 
     fn flush(&mut self) -> Result<(), Self::Error> {
         File::flush(&mut self.file)
+    }
+}
+
+#[cfg(feature = "std")]
+impl<'fs, IO: ReadWriteSeek, TP: TimeProvider, OCC, Reader, Writer> std::io::Write
+    for ReadWriteProxy<'_, 'fs, IO, TP, OCC, Reader, Writer>
+where
+    std::io::Error: From<Error<IO::Error>>,
+    Writer: FnMut(&mut RefMut<'_, IO>, u64, &[u8]) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
+{
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        Ok(Write::write(self, buf)?)
+    }
+
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        Ok(Write::write_all(self, buf)?)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(Write::flush(self)?)
     }
 }
 
