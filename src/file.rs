@@ -1,3 +1,4 @@
+use core::cell::RefMut;
 use core::convert::TryFrom;
 
 use crate::dir_entry::DirEntryEditor;
@@ -388,6 +389,181 @@ impl<IO: ReadWriteSeek, TP: TimeProvider, OCC> Write for File<'_, IO, TP, OCC> {
         Self::flush(self)
     }
 }
+
+pub struct ReadWriteProxy<'a, 'fs: 'a, IO: ReadWriteSeek, TP: TimeProvider, OCC, Reader, Writer> {
+    file: &'a mut File<'fs, IO, TP, OCC>,
+    reader: Reader,
+    writer: Writer,
+}
+
+impl<'a, 'fs, IO, TP, OCC, Reader, Writer> ReadWriteProxy<'a, 'fs, IO, TP, OCC, Reader, Writer>
+where
+    IO: ReadWriteSeek,
+    TP: TimeProvider,
+{
+    /// Both `writer` and `reader` take two parameters: (disk, disk_offset) and
+    /// return a result containing the number of bytes written if successful or an
+    /// IO error if unsuccessful. Note that the disk will have already been seeked
+    /// to the disk_offset value.
+    pub fn new(file: &'a mut File<'fs, IO, TP, OCC>, reader: Reader, writer: Writer) -> Self {
+        ReadWriteProxy { file, reader, writer }
+    }
+}
+
+impl<IO: ReadWriteSeek, TP: TimeProvider, OCC, Reader, Writer> IoBase
+    for ReadWriteProxy<'_, '_, IO, TP, OCC, Reader, Writer>
+{
+    type Error = Error<IO::Error>;
+}
+
+impl<'fs, IO: ReadWriteSeek, TP: TimeProvider, OCC, Reader, Writer> Read
+    for ReadWriteProxy<'_, 'fs, IO, TP, OCC, Reader, Writer>
+where
+    Reader: FnMut(&mut RefMut<'_, IO>, u64) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
+{
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        trace!("File::read");
+        let file = &mut self.file;
+        let cluster_size = file.fs.cluster_size();
+        let current_cluster_opt = if file.offset % cluster_size == 0 {
+            // next cluster
+            match file.current_cluster {
+                None => file.first_cluster,
+                Some(n) => {
+                    let r = file.fs.cluster_iter(n).next();
+                    match r {
+                        Some(Err(err)) => return Err(err),
+                        Some(Ok(n)) => Some(n),
+                        None => None,
+                    }
+                }
+            }
+        } else {
+            file.current_cluster
+        };
+        let Some(current_cluster) = current_cluster_opt else {
+            return Ok(0);
+        };
+        let offset_in_cluster = file.offset % cluster_size;
+        let bytes_left_in_cluster = (cluster_size - offset_in_cluster) as usize;
+        let bytes_left_in_file = file.bytes_left_in_file().unwrap_or(bytes_left_in_cluster);
+        let read_size = buf.len().min(bytes_left_in_cluster).min(bytes_left_in_file);
+        if read_size == 0 {
+            return Ok(0);
+        }
+        trace!("read {} bytes in cluster {}", read_size, current_cluster);
+        let offset_in_fs = file.fs.offset_from_cluster(current_cluster) + u64::from(offset_in_cluster);
+        let read_bytes = {
+            let mut disk = file.fs.disk.borrow_mut();
+            disk.seek(SeekFrom::Start(offset_in_fs))?;
+            // replaced below commented out line with call into reader
+            // disk.read(&mut buf[..read_size])?
+            (self.reader)(&mut disk, offset_in_fs)?
+        };
+        if read_bytes == 0 {
+            return Ok(0);
+        }
+        file.offset += read_bytes as u32;
+        file.current_cluster = Some(current_cluster);
+
+        if let Some(ref mut e) = file.entry {
+            if file.fs.options.update_accessed_date {
+                let now = file.fs.options.time_provider.get_current_date();
+                e.set_accessed(now);
+            }
+        }
+        Ok(read_bytes)
+    }
+}
+
+#[cfg(feature = "std")]
+impl<'fs, IO: ReadWriteSeek, TP: TimeProvider, OCC, Reader, Writer> std::io::Read
+    for ReadWriteProxy<'_, 'fs, IO, TP, OCC, Reader, Writer>
+where
+    std::io::Error: From<Error<IO::Error>>,
+    Reader: FnMut(&mut RefMut<'_, IO>, u64) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
+{
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        Ok(Read::read(self, buf)?)
+    }
+}
+
+impl<'fs, IO: ReadWriteSeek, TP: TimeProvider, OCC, Reader, Writer> Write
+    for ReadWriteProxy<'_, 'fs, IO, TP, OCC, Reader, Writer>
+where
+    Writer: FnMut(&mut RefMut<'_, IO>, u64, &[u8]) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
+{
+    fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        trace!("File::write");
+        let file = &mut self.file;
+        let cluster_size = file.fs.cluster_size();
+        let offset_in_cluster = file.offset % cluster_size;
+        let bytes_left_in_cluster = (cluster_size - offset_in_cluster) as usize;
+        let bytes_left_until_max_file_size = (MAX_FILE_SIZE - file.offset) as usize;
+        let write_size = buf.len().min(bytes_left_in_cluster).min(bytes_left_until_max_file_size);
+        // Exit early if we are going to write no data
+        if write_size == 0 {
+            return Ok(0);
+        }
+        // Mark the volume 'dirty'
+        file.fs.set_dirty_flag(true)?;
+        // Get cluster for write possibly allocating new one
+        let current_cluster = if file.offset % cluster_size == 0 {
+            // next cluster
+            let next_cluster = match file.current_cluster {
+                None => file.first_cluster,
+                Some(n) => {
+                    let r = file.fs.cluster_iter(n).next();
+                    match r {
+                        Some(Err(err)) => return Err(err),
+                        Some(Ok(n)) => Some(n),
+                        None => None,
+                    }
+                }
+            };
+            if let Some(n) = next_cluster {
+                n
+            } else {
+                // end of chain reached - allocate new cluster
+                let new_cluster = file.fs.alloc_cluster(file.current_cluster, file.is_dir())?;
+                trace!("allocated cluster {}", new_cluster);
+                if file.first_cluster.is_none() {
+                    file.set_first_cluster(new_cluster);
+                }
+                new_cluster
+            }
+        } else {
+            // file.current_cluster should be a valid cluster
+            match file.current_cluster {
+                Some(n) => n,
+                None => panic!("Offset inside cluster but no cluster allocated"),
+            }
+        };
+        trace!("write {} bytes in cluster {}", write_size, current_cluster);
+        let offset_in_fs = file.fs.offset_from_cluster(current_cluster) + u64::from(offset_in_cluster);
+        let written_bytes = {
+            let mut disk = file.fs.disk.borrow_mut();
+            disk.seek(SeekFrom::Start(offset_in_fs))?;
+            // Line below was replaced with a call into self.writer
+            // disk.write(&buf[..write_size])?
+            (self.writer)(&mut disk, offset_in_fs, &buf[..write_size])?
+        };
+        if written_bytes == 0 {
+            return Ok(0);
+        }
+        // some bytes were writter - update position and optionally size
+        file.offset += written_bytes as u32;
+        file.current_cluster = Some(current_cluster);
+        file.update_dir_entry_after_write();
+        Ok(written_bytes)
+    }
+
+    fn flush(&mut self) -> Result<(), Self::Error> {
+        File::flush(&mut self.file)
+    }
+}
+
+impl<IO: ReadWriteSeek, TP: TimeProvider, OCC> File<'_, IO, TP, OCC> {}
 
 #[cfg(feature = "std")]
 impl<IO: ReadWriteSeek, TP: TimeProvider, OCC> std::io::Write for File<'_, IO, TP, OCC>
