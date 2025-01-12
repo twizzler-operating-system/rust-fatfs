@@ -401,8 +401,8 @@ where
     IO: ReadWriteSeek,
     TP: TimeProvider,
 {
-    /// `writer` takes two parameters: (disk: IO, disk_offset: u64) while `reader`
-    /// takes three: (disk: IO, offset: u64, buffer: &\[u8\]).
+    /// `writer` takes these parameters: (disk: IO, disk_offset: u64, &\[u8\]) while `reader`
+    /// takes these: (disk: IO, offset: u64, buffer: &mut \[u8\]).
     /// Both return a result containing the number of bytes written if successful or an
     /// IO error if unsuccessful. Note that the disk will have already been seeked
     /// to the disk_offset value.
@@ -420,7 +420,7 @@ impl<IO: ReadWriteSeek, TP: TimeProvider, OCC, Reader, Writer> IoBase
 impl<'fs, IO: ReadWriteSeek, TP: TimeProvider, OCC, Reader, Writer> Read
     for ReadWriteProxy<'_, 'fs, IO, TP, OCC, Reader, Writer>
 where
-    Reader: FnMut(&mut RefMut<'_, IO>, u64) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
+    Reader: FnMut(&mut RefMut<'_, IO>, u64, &mut [u8]) -> Result<usize, <File<'fs, IO, TP, OCC> as IoBase>::Error>,
 {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
         trace!("File::read");
@@ -459,7 +459,7 @@ where
             disk.seek(SeekFrom::Start(offset_in_fs))?;
             // replaced below commented out line with call into reader
             // disk.read(&mut buf[..read_size])?
-            (self.reader)(&mut disk, offset_in_fs)?
+            (self.reader)(&mut disk, offset_in_fs, &mut buf[..read_size])?
         };
         if read_bytes == 0 {
             return Ok(0);
