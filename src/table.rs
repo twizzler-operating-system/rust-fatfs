@@ -630,6 +630,19 @@ where
         }
         Ok(num_free)
     }
+
+    pub(crate) fn join_with(&mut self, other: Self) -> Result<(), Error<E>> {
+        let first_cluster = self.cluster;
+        let last = match self.last() {
+            Some(last) => last?,
+            None => first_cluster.unwrap(),
+        };
+        let Some(first_chunk) = other.cluster else {
+            return Err(Error::InvalidJoin);
+        };
+        write_fat(self.fat.borrow_mut(), self.fat_type, last, FatValue::Data(first_chunk))?;
+        Ok(())
+    }
 }
 
 impl<B, E, S> Iterator for ClusterIterator<B, E, S>

@@ -372,9 +372,56 @@ impl<'a, IO: ReadWriteSeek, TP: TimeProvider, OCC: OemCpConverter> Dir<'a, IO, T
             self.fs.free_cluster_chain(n)?;
         }
         // free long and short name entries
+        self.remove_name_entries(e)?;
+        Ok(())
+    }
+
+    fn get_dir_from_path<'b>(&self, path: &'b str) -> Result<(Self, &'b str), Error<IO::Error>> {
+        let (name, rest_opt) = split_path(path);
+        if let Some(rest) = rest_opt {
+            return self
+                .find_entry(name, Some(true), None)?
+                .to_dir()
+                .get_dir_from_path(rest);
+        };
+        Ok((self.clone(), name))
+    }
+
+    /// Joins two files together. It deletes the second_path's file entry and
+    /// makes the first file consume the chunks that previously belonged to the second_path.
+    pub fn merge_files(&self, first_path: &str, second_path: &str) -> Result<(), Error<IO::Error>>
+    where
+        TP: TimeProvider,
+        OCC: OemCpConverter,
+    {
+        trace!("Dir::merge_files {} {}", first_path, second_path);
+        let (first_dir, first_name) = self.get_dir_from_path(first_path)?;
+        let (second_dir, second_name) = self.get_dir_from_path(second_path)?;
+
+        // make sure both paths are directories
+        let first_entry = first_dir.find_entry(first_name, None, None)?;
+        let second_entry = second_dir.find_entry(second_name, None, None)?;
+        if first_entry.is_dir() || second_entry.is_dir() {
+            return Err(Error::InvalidInput);
+        };
+
+        self.fs
+            .merge_fat_iterators(&mut first_entry.to_file(), second_entry.to_file())?;
+
+        let first_size = ((first_entry.data.size().unwrap() + 4095) / 4096) * 4096;
+        let second_size = ((second_entry.data.size().unwrap() + 4095) / 4096) * 4096;
+        second_dir.remove_name_entries(second_entry)?;
+        let mut editor = first_entry.editor();
+        editor.set_size(first_size + second_size);
+        editor.flush(self.fs)?;
+        Ok(())
+    }
+
+    /// frees long and short name entries
+    pub(crate) fn remove_name_entries(&self, entry: DirEntry<'a, IO, TP, OCC>) -> Result<(), Error<IO::Error>> {
         let mut stream = self.stream.clone();
-        stream.seek(SeekFrom::Start(e.offset_range.0))?;
-        let num = ((e.offset_range.1 - e.offset_range.0) / u64::from(DIR_ENTRY_SIZE)) as usize;
+        stream.seek(SeekFrom::Start(entry.offset_range.0))?;
+        let num = ((entry.offset_range.1 - entry.offset_range.0) / u64::from(DIR_ENTRY_SIZE)) as usize;
         for _ in 0..num {
             let mut data = DirEntryData::deserialize(&mut stream)?;
             trace!("removing dir entry {:?}", data);

@@ -26,6 +26,9 @@ pub enum Error<T> {
     InvalidFileNameLength,
     /// The provided file name contains an invalid character.
     UnsupportedFileNameCharacter,
+    /// A join operation could not be completed as one of the two files'
+    /// being joined together didn't have any fat entries.
+    InvalidJoin,
 }
 
 impl<T: IoError> From<T> for Error<T> {
@@ -48,6 +51,7 @@ impl From<Error<std::io::Error>> for std::io::Error {
             Error::NotFound => Self::new(std::io::ErrorKind::NotFound, error),
             Error::AlreadyExists => Self::new(std::io::ErrorKind::AlreadyExists, error),
             Error::CorruptedFileSystem => Self::new(std::io::ErrorKind::InvalidData, error),
+            Error::InvalidJoin => Self::new(std::io::ErrorKind::Other, "invalid join operation"),
         }
     }
 }
@@ -66,6 +70,7 @@ impl<T: core::fmt::Display> core::fmt::Display for Error<T> {
             Error::NotFound => write!(f, "No such file or directory"),
             Error::AlreadyExists => write!(f, "File or directory already exists"),
             Error::CorruptedFileSystem => write!(f, "Corrupted file system"),
+            Error::InvalidJoin => write!(f, "invalid join operation"),
         }
     }
 }

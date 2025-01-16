@@ -462,6 +462,18 @@ impl<IO: Read + Write + Seek, TP, OCC> FileSystem<IO, TP, OCC> {
         fat_slice(io, &self.bpb)
     }
 
+    /// Joins two files together within the fat table.
+    pub(crate) fn merge_fat_iterators(
+        &self,
+        file_one: &mut File<'_, IO, TP, OCC>,
+        file_two: File<'_, IO, TP, OCC>,
+    ) -> Result<(), Error<IO::Error>> {
+        let mut first_file_iter = self.cluster_iter(file_one.first_cluster().ok_or(Error::InvalidJoin)?);
+        let last_file_iter = self.cluster_iter(file_two.first_cluster().ok_or(Error::InvalidJoin)?);
+        first_file_iter.join_with(last_file_iter)?;
+        Ok(())
+    }
+
     pub(crate) fn cluster_iter(
         &self,
         cluster: u32,
